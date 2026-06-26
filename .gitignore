@@ -1,0 +1,13 @@
+build/
+out/
+target/
+.gradle/
+.idea/
+.vscode/
+*.class
+*.jar
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.log
