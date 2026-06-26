@@ -8,11 +8,13 @@ No Docker.
 
 ## Current Step
 
-The current C++ program does one thing:
+The current C++ program does two things:
 
 1. Simulates a stock path using Geometric Brownian Motion.
 2. Takes the final stock price at maturity.
 3. Computes the payoff of a European call option.
+4. Runs many simulated terminal stock prices.
+5. Estimates the call option price with Monte Carlo.
 
 This is the foundation for option pricing, delta hedging, P&L simulation, and RL.
 
