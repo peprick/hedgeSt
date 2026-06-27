@@ -15,6 +15,9 @@ The current C++ program does two things:
 3. Computes the payoff of a European call option.
 4. Runs many simulated terminal stock prices.
 5. Estimates the call option price with Monte Carlo.
+6. Computes the Black-Scholes formula price and call delta.
+7. Compares the Monte Carlo price with the formula price.
+8. Runs a one-path delta hedging demo with transaction costs.
 
 This is the foundation for option pricing, delta hedging, P&L simulation, and RL.
 
