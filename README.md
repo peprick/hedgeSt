@@ -1,60 +1,155 @@
-# StochHedge
+# HedgeSt
 
-StochHedge is a math-first quant research project. The first goal is to understand
-stochastic stock paths, option payoff, and hedging mechanics in C++. Later we will
-wrap the engine with Java Spring APIs and add reinforcement learning hedging.
+HedgeSt is a math-heavy quant engineering project that compares classical option
+hedging against a small reinforcement-learning-style hedger.
+
+The core stochastic calculus and simulation work lives in C++. A Java Spring
+Boot backend wraps the C++ engine and exposes the experiment through HTTP.
 
 No Docker.
 
-## Current Step
+## What It Does
 
-The current C++ program does two things:
-
-1. Simulates a stock path using Geometric Brownian Motion.
-2. Takes the final stock price at maturity.
-3. Computes the payoff of a European call option.
-4. Runs many simulated terminal stock prices.
-5. Estimates the call option price with Monte Carlo.
-6. Computes the Black-Scholes formula price and call delta.
-7. Compares the Monte Carlo price with the formula price.
-8. Runs a one-path delta hedging demo with transaction costs.
-
-This is the foundation for option pricing, delta hedging, P&L simulation, and RL.
+- Simulates stock paths with Geometric Brownian Motion.
+- Prices a European call option with Monte Carlo simulation.
+- Computes the Black-Scholes call price and delta.
+- Runs delta hedging experiments with transaction costs.
+- Compares daily, weekly, monthly, and no-trade-band hedging strategies.
+- Reports risk metrics such as mean P&L, standard deviation, VaR, CVaR, loss
+  probability, worst P&L, and transaction costs.
+- Trains and evaluates a simple tabular Q-learning-style hedger.
+- Exposes the C++ experiment result through a Spring Boot API.
 
 ## Project Shape
 
 ```text
-cpp-engine/       C++ stochastic calculus and quant math engine
-docs/learning/    Short notes explaining the math and finance as we build
-backend-spring/   Java Spring API layer, added later
+cpp-engine/       C++ stochastic simulation, pricing, hedging, and RL engine
+backend-spring/   Java Spring Boot API wrapper around the C++ engine
+README.md         Project guide
 ```
 
-## Build Later
+## Big Idea
 
-This machine does not currently expose a C++ compiler or CMake on PATH. Once a
-compiler is available, either of these will work.
+Imagine you sell someone an option. The option can become expensive for you if
+the stock moves. Hedging means you keep buying or selling pieces of the stock so
+your risk stays controlled.
 
-With CMake:
+The project compares:
+
+- a formula-based hedge from Black-Scholes delta;
+- slower or cheaper hedge schedules;
+- no-trade bands that avoid tiny costly trades;
+- a learning agent that tries to decide when to hedge.
+
+The C++ engine does the math many times on random stock paths. The Spring app
+acts like a clean backend layer that can be connected to a frontend later.
+
+## Prerequisites
+
+- Java 17
+- Apache Maven 3.9+
+- MSYS2 UCRT64 toolchain, including `g++`, `cmake`, and `ninja`
+
+On this machine, the MSYS2 runtime path is:
+
+```powershell
+C:\msys64\ucrt64\bin
+```
+
+If the C++ executable fails to start from PowerShell or Spring, add that folder
+to PATH before running commands:
+
+```powershell
+$env:Path = $env:Path + ';C:\msys64\ucrt64\bin'
+```
+
+## Build And Run The C++ Engine
 
 ```powershell
 cd C:\Users\Sagarnil\quant1\cpp-engine
-cmake -S . -B build
+cmake -S . -B build -G Ninja
 cmake --build build
-.\build\Debug\stoch_hedge_first_step.exe
+.\build\stoch_hedge_first_step.exe
 ```
 
-With MinGW g++:
+To get machine-readable JSON for the Spring backend:
 
 ```powershell
-cd C:\Users\Sagarnil\quant1\cpp-engine
-g++ -std=c++20 -O2 -Wall -Wextra src\main.cpp -o stoch_hedge_first_step.exe
-.\stoch_hedge_first_step.exe
+.\build\stoch_hedge_first_step.exe --json
 ```
 
-With MSVC Developer PowerShell:
+## Build And Run The Spring Backend
 
 ```powershell
-cd C:\Users\Sagarnil\quant1\cpp-engine
-cl /EHsc /std:c++20 src\main.cpp /Fe:stoch_hedge_first_step.exe
-.\stoch_hedge_first_step.exe
+cd C:\Users\Sagarnil\quant1\backend-spring
+mvn test
+mvn package -DskipTests
+java -jar target\hedgest-backend-0.1.0-SNAPSHOT.jar
 ```
+
+The backend expects this C++ engine path by default:
+
+```text
+../cpp-engine/build/stoch_hedge_first_step.exe
+```
+
+You can change it in:
+
+```text
+backend-spring/src/main/resources/application.properties
+```
+
+## API
+
+Health check:
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:8080/api/health
+```
+
+Run the quant experiment:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/experiments/run
+```
+
+The experiment response includes:
+
+- market assumptions;
+- Monte Carlo price;
+- Black-Scholes price and delta;
+- one-path delta hedge demo;
+- strategy risk summaries;
+- Q-learning hedger evaluation.
+
+## Current Result Snapshot
+
+The default run uses:
+
+- initial stock price: `100`
+- strike: `100`
+- risk-free rate: `5%`
+- volatility: `20%`
+- maturity: `1` year
+- trading steps: `252`
+- transaction cost rate: `0.1%`
+
+The engine currently reports a Black-Scholes call price near `10.450584` and
+compares six hedging strategies.
+
+## Resume Angle
+
+Built a C++ stochastic-market simulation engine for option pricing and hedging,
+then exposed it through a Java Spring Boot API. Compared Black-Scholes delta
+hedging, transaction-cost-aware strategy variants, and a tabular reinforcement
+learning hedger using Monte Carlo P&L, VaR, CVaR, and tail-loss metrics.
+
+## Next Improvements
+
+- Split the C++ engine into pricing, simulation, hedging, and learning modules.
+- Add configurable experiment inputs through the Spring API.
+- Add Heston stochastic-volatility simulation.
+- Store experiment runs in a database.
+- Add a lightweight frontend dashboard.
+
+This is an educational research project, not financial advice.

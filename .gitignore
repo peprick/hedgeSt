@@ -1,6 +1,8 @@
 build/
 out/
 target/
+.mvn/
+.tools/
 .gradle/
 .idea/
 .vscode/
