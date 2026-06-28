@@ -1,6 +1,6 @@
-package com.peprick.hedgest.api;
+package com.peprick.stochedge.api;
 
-import com.peprick.hedgest.engine.QuantEngineService;
+import com.peprick.stochedge.engine.QuantEngineService;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,7 +21,7 @@ public class QuantExperimentController {
     public Map<String, String> health() {
         return Map.of(
             "status", "UP",
-            "service", "hedgest-backend"
+            "service", "stochedge-backend"
         );
     }
 

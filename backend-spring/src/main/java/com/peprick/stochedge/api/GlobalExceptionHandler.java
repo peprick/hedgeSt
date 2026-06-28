@@ -1,6 +1,6 @@
-package com.peprick.hedgest.api;
+package com.peprick.stochedge.api;
 
-import com.peprick.hedgest.engine.EngineExecutionException;
+import com.peprick.stochedge.engine.EngineExecutionException;
 import java.time.Instant;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

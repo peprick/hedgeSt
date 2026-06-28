@@ -1,12 +1,12 @@
-package com.peprick.hedgest;
+package com.peprick.stochedge;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class HedgeStApplication {
+public class StochEdgeApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(HedgeStApplication.class, args);
+        SpringApplication.run(StochEdgeApplication.class, args);
     }
 }
