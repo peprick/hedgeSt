@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>StochEdge Quant Dashboard</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/styles.css">
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+    <script src="/app.js" defer></script>
+</head>
+<body>
+    <div class="app-shell">
+        <header class="topbar">
+            <div>
+                <p class="eyebrow">C++ stochastic engine plus Spring API</p>
+                <h1>StochEdge Quant Dashboard</h1>
+            </div>
+            <div class="status-cluster" aria-live="polite">
+                <span class="status-pill" id="healthPill">
+                    <span class="status-dot"></span>
+                    <span id="healthText">Checking backend</span>
+                </span>
+                <button class="icon-button" id="refreshHealthButton" type="button" aria-label="Refresh backend status" title="Refresh backend status">
+                    <i data-lucide="refresh-cw"></i>
+                </button>
+            </div>
+        </header>
+
+        <main>
+            <section class="control-band" aria-label="Experiment controls">
+                <div class="control-copy">
+                    <h2>Run the hedging experiment</h2>
+                    <p id="runSummary">Launches the C++ engine, simulates market paths, compares hedging strategies, and returns risk metrics.</p>
+                </div>
+                <button class="primary-button" id="runButton" type="button">
+                    <i data-lucide="play"></i>
+                    <span>Run Experiment</span>
+                </button>
+            </section>
+
+            <section class="alert is-hidden" id="errorPanel" role="alert"></section>
+
+            <section class="tabs" aria-label="Dashboard views">
+                <button class="tab-button is-active" type="button" data-tab="overview">Overview</button>
+                <button class="tab-button" type="button" data-tab="strategies">Strategies</button>
+                <button class="tab-button" type="button" data-tab="learning">Learning Agent</button>
+                <button class="tab-button" type="button" data-tab="json">Engine JSON</button>
+            </section>
+
+            <section class="empty-state" id="emptyState">
+                <div class="empty-visual" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+                <div>
+                    <h2>No experiment loaded</h2>
+                    <p>Press Run Experiment to turn the C++ output into pricing cards, risk charts, and strategy comparisons.</p>
+                </div>
+            </section>
+
+            <section class="tab-panel" id="overviewPanel" data-panel="overview">
+                <div class="metric-grid" id="pricingCards"></div>
+
+                <div class="dashboard-grid">
+                    <article class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <p class="eyebrow">Market setup</p>
+                                <h2>Assumptions</h2>
+                            </div>
+                            <i data-lucide="sliders-horizontal"></i>
+                        </div>
+                        <div class="assumption-grid" id="marketAssumptions"></div>
+                    </article>
+
+                    <article class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <p class="eyebrow">Pricing check</p>
+                                <h2>Monte Carlo vs Formula</h2>
+                            </div>
+                            <i data-lucide="activity"></i>
+                        </div>
+                        <div class="comparison-bars" id="pricingComparison"></div>
+                    </article>
+                </div>
+
+                <article class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <p class="eyebrow">Tail risk</p>
+                            <h2>Strategy Leaderboard</h2>
+                        </div>
+                        <i data-lucide="trophy"></i>
+                    </div>
+                    <div class="leaderboard" id="leaderboard"></div>
+                </article>
+            </section>
+
+            <section class="tab-panel is-hidden" id="strategiesPanel" data-panel="strategies">
+                <div class="toolbar">
+                    <div class="segmented-control" aria-label="Sort strategies">
+                        <button class="segment is-active" type="button" data-sort="cvar">Tail Risk</button>
+                        <button class="segment" type="button" data-sort="pnl">P&L</button>
+                        <button class="segment" type="button" data-sort="cost">Cost</button>
+                        <button class="segment" type="button" data-sort="loss">Loss Odds</button>
+                    </div>
+                    <div class="legend">
+                        <span><b class="legend-swatch swatch-risk"></b>CVaR</span>
+                        <span><b class="legend-swatch swatch-cost"></b>Cost</span>
+                        <span><b class="legend-swatch swatch-pnl"></b>Avg P&L</span>
+                    </div>
+                </div>
+
+                <article class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <p class="eyebrow">Compare strategies</p>
+                            <h2>Risk And Cost Chart</h2>
+                        </div>
+                        <i data-lucide="bar-chart-3"></i>
+                    </div>
+                    <div class="strategy-bars" id="strategyBars"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <p class="eyebrow">Full metrics</p>
+                            <h2>Strategy Table</h2>
+                        </div>
+                        <i data-lucide="table-2"></i>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Strategy</th>
+                                    <th>Avg P&L</th>
+                                    <th>Std Dev</th>
+                                    <th>VaR 95</th>
+                                    <th>CVaR 95</th>
+                                    <th>Loss</th>
+                                    <th>Cost</th>
+                                    <th>Rebalances</th>
+                                </tr>
+                            </thead>
+                            <tbody id="strategyTable"></tbody>
+                        </table>
+                    </div>
+                </article>
+            </section>
+
+            <section class="tab-panel is-hidden" id="learningPanel" data-panel="learning">
+                <div class="dashboard-grid">
+                    <article class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <p class="eyebrow">Agent design</p>
+                                <h2>Learning Setup</h2>
+                            </div>
+                            <i data-lucide="brain-circuit"></i>
+                        </div>
+                        <div class="fact-list" id="learningFacts"></div>
+                    </article>
+
+                    <article class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <p class="eyebrow">Baseline check</p>
+                                <h2>Agent vs Daily Delta</h2>
+                            </div>
+                            <i data-lucide="scale"></i>
+                        </div>
+                        <div class="agent-compare" id="agentCompare"></div>
+                    </article>
+                </div>
+
+                <article class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <p class="eyebrow">Single path</p>
+                            <h2>One Hedging Run</h2>
+                        </div>
+                        <i data-lucide="route"></i>
+                    </div>
+                    <div class="metric-grid compact" id="onePathCards"></div>
+                </article>
+            </section>
+
+            <section class="tab-panel is-hidden" id="jsonPanel" data-panel="json">
+                <article class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <p class="eyebrow">Raw response</p>
+                            <h2>Engine JSON</h2>
+                        </div>
+                        <button class="secondary-button" id="copyJsonButton" type="button">
+                            <i data-lucide="copy"></i>
+                            <span>Copy</span>
+                        </button>
+                    </div>
+                    <pre class="json-view" id="jsonView">{}</pre>
+                </article>
+            </section>
+        </main>
+    </div>
+</body>
+</html>

@@ -1,4 +1,4 @@
-package com.peprick.hedgest.api;
+package com.peprick.stochedge.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -15,6 +15,6 @@ class QuantExperimentControllerTest {
 
         assertThat(health)
             .containsEntry("status", "UP")
-            .containsEntry("service", "hedgest-backend");
+            .containsEntry("service", "stochedge-backend");
     }
 }

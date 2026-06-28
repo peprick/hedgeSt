@@ -6,6 +6,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct GbmParameters {
@@ -39,8 +40,31 @@ struct QLearningSettings {
     double rewardDiscount = 0.99;
     double epsilonStart = 0.35;
     double epsilonEnd = 0.03;
+    double lossAversion = 0.35;
     unsigned long long trainingSeed = 20260628;
     unsigned long long evaluationSeed = 20260629;
+};
+
+struct ExperimentConfig {
+    GbmParameters market;
+    EuropeanCallOption option;
+    double riskFreeRate = 0.05;
+    double transactionCostRate = 0.001;
+    MonteCarloSettings monteCarlo;
+    HedgeSimulationSettings hedging;
+    QLearningSettings qLearning;
+};
+
+struct StrategyConfig {
+    std::string label;
+    int rebalanceEverySteps = 1;
+    double deltaRebalanceBand = 0.0;
+};
+
+struct RuntimeOptions {
+    ExperimentConfig config;
+    bool json = false;
+    bool help = false;
 };
 
 struct MonteCarloResult {
@@ -102,7 +126,7 @@ struct HedgingStepResult {
     bool done = false;
 };
 
-struct HedgingEnvironmentDemo {
+struct HedgingEnvironmentRun {
     double totalReward = 0.0;
     double finalPnl = 0.0;
     double totalTransactionCosts = 0.0;
@@ -120,6 +144,7 @@ struct QLearningResult {
     double averageTrainingReward = 0.0;
     int trainingEpisodes = 0;
     std::vector<double> qTable;
+    std::vector<int> evaluationActionCounts;
 };
 
 void validateGbmParameters(const GbmParameters& params) {
@@ -143,6 +168,59 @@ void validateEuropeanCall(const EuropeanCallOption& option) {
     }
     if (option.maturityYears <= 0.0) {
         throw std::invalid_argument("maturityYears must be positive");
+    }
+}
+
+void validateMonteCarloSettings(const MonteCarloSettings& settings) {
+    if (settings.paths <= 1) {
+        throw std::invalid_argument("Monte Carlo paths must be greater than 1");
+    }
+}
+
+void validateHedgeSimulationSettings(const HedgeSimulationSettings& settings) {
+    if (settings.paths <= 1) {
+        throw std::invalid_argument("hedge simulation paths must be greater than 1");
+    }
+}
+
+void validateQLearningSettings(const QLearningSettings& settings) {
+    if (settings.trainingEpisodes <= 0) {
+        throw std::invalid_argument("RL training episodes must be positive");
+    }
+    if (settings.evaluationPaths <= 1) {
+        throw std::invalid_argument("RL evaluation paths must be greater than 1");
+    }
+    if (settings.learningRate <= 0.0 || settings.learningRate > 1.0) {
+        throw std::invalid_argument("RL learning rate must be in (0, 1]");
+    }
+    if (settings.rewardDiscount < 0.0 || settings.rewardDiscount > 1.0) {
+        throw std::invalid_argument("RL reward discount must be in [0, 1]");
+    }
+    if (settings.epsilonStart < 0.0 || settings.epsilonStart > 1.0) {
+        throw std::invalid_argument("RL epsilon start must be in [0, 1]");
+    }
+    if (settings.epsilonEnd < 0.0 || settings.epsilonEnd > 1.0) {
+        throw std::invalid_argument("RL epsilon end must be in [0, 1]");
+    }
+    if (settings.lossAversion < 0.0) {
+        throw std::invalid_argument("RL loss aversion cannot be negative");
+    }
+}
+
+void validateExperimentConfig(const ExperimentConfig& config) {
+    validateGbmParameters(config.market);
+    validateEuropeanCall(config.option);
+    validateMonteCarloSettings(config.monteCarlo);
+    validateHedgeSimulationSettings(config.hedging);
+    validateQLearningSettings(config.qLearning);
+    if (config.riskFreeRate < -1.0) {
+        throw std::invalid_argument("riskFreeRate is unrealistically low");
+    }
+    if (config.transactionCostRate < 0.0) {
+        throw std::invalid_argument("transactionCostRate cannot be negative");
+    }
+    if (std::abs(config.market.maturityYears - config.option.maturityYears) > 1e-12) {
+        throw std::invalid_argument("market and option maturity must match");
     }
 }
 
@@ -206,9 +284,7 @@ MonteCarloResult priceEuropeanCallMonteCarlo(
 ) {
     validateGbmParameters(market);
     validateEuropeanCall(option);
-    if (settings.paths <= 1) {
-        throw std::invalid_argument("Monte Carlo paths must be greater than 1");
-    }
+    validateMonteCarloSettings(settings);
 
     std::mt19937_64 rng(settings.seed);
 
@@ -354,14 +430,19 @@ int hedgingStateCount() {
 }
 
 int qLearningActionCount() {
-    return 2;
+    return 4;
 }
 
 double qLearningTargetHedge(const HedgingState& state, int actionIndex) {
+    const double deltaMove = state.blackScholesDelta - state.currentHedge;
     switch (actionIndex) {
         case 0:
             return state.currentHedge;
         case 1:
+            return state.currentHedge + 0.25 * deltaMove;
+        case 2:
+            return state.currentHedge + 0.50 * deltaMove;
+        case 3:
             return state.blackScholesDelta;
         default:
             throw std::invalid_argument("invalid Q-learning action index");
@@ -496,7 +577,7 @@ DeltaHedgeResult runOnePathDeltaHedge(
     };
 }
 
-HedgingEnvironmentDemo runBlackScholesPolicyEnvironmentDemo(
+HedgingEnvironmentRun runBlackScholesPolicyEnvironment(
     const std::vector<double>& stockPath,
     const EuropeanCallOption& option,
     double riskFreeRate,
@@ -566,7 +647,7 @@ HedgingEnvironmentDemo runBlackScholesPolicyEnvironmentDemo(
     cash -= optionPayoff;
     totalReward -= std::abs(cash);
 
-    return HedgingEnvironmentDemo{
+    return HedgingEnvironmentRun{
         totalReward,
         cash,
         totalTransactionCosts,
@@ -583,7 +664,8 @@ DeltaHedgeResult runQPolicyOnePath(
     const std::vector<double>& qTable,
     double epsilon,
     std::mt19937_64& rng,
-    std::vector<EpisodeDecision>* decisions
+    std::vector<EpisodeDecision>* decisions,
+    std::vector<int>* actionCounts
 ) {
     if (stockPath.size() < 2) {
         throw std::invalid_argument("stockPath must contain at least two prices");
@@ -634,6 +716,9 @@ DeltaHedgeResult runQPolicyOnePath(
 
         if (decisions != nullptr) {
             decisions->push_back(EpisodeDecision{stateIndex, actionIndex, -transactionCost});
+        }
+        if (actionCounts != nullptr) {
+            ++(*actionCounts)[static_cast<std::size_t>(actionIndex)];
         }
 
         currentHedge = targetHedge;
@@ -769,24 +854,29 @@ QLearningResult trainAndEvaluateQHedger(
             qTable,
             epsilon,
             trainingRng,
-            &decisions
+            &decisions,
+            nullptr
         );
 
-        double returnEstimate = -std::abs(hedge.hedgingPnl);
+        const double lossPenalty = settings.lossAversion * std::max(0.0, -hedge.hedgingPnl);
+        double returnEstimate = -std::abs(hedge.hedgingPnl) - lossPenalty;
         trainingRewardSum += returnEstimate;
 
+        const double episodeLearningRate =
+            settings.learningRate / (1.0 + 0.50 * progress);
         for (auto decision = decisions.rbegin(); decision != decisions.rend(); ++decision) {
             returnEstimate = decision->reward + settings.rewardDiscount * returnEstimate;
             const std::size_t qIndex =
                 static_cast<std::size_t>(decision->stateIndex) * static_cast<std::size_t>(actionCount)
                 + static_cast<std::size_t>(decision->actionIndex);
-            qTable[qIndex] += settings.learningRate * (returnEstimate - qTable[qIndex]);
+            qTable[qIndex] += episodeLearningRate * (returnEstimate - qTable[qIndex]);
         }
     }
 
     std::mt19937_64 evaluationRng(settings.evaluationSeed);
     std::vector<DeltaHedgeResult> evaluationResults;
     evaluationResults.reserve(static_cast<std::size_t>(settings.evaluationPaths));
+    std::vector<int> evaluationActionCounts(static_cast<std::size_t>(actionCount), 0);
 
     for (int pathIndex = 0; pathIndex < settings.evaluationPaths; ++pathIndex) {
         const std::vector<double> path = simulateGbmPath(pricingWorld, evaluationRng);
@@ -799,7 +889,8 @@ QLearningResult trainAndEvaluateQHedger(
             qTable,
             0.0,
             evaluationRng,
-            nullptr
+            nullptr,
+            &evaluationActionCounts
         ));
     }
 
@@ -812,7 +903,8 @@ QLearningResult trainAndEvaluateQHedger(
         ),
         trainingRewardSum / static_cast<double>(settings.trainingEpisodes),
         settings.trainingEpisodes,
-        qTable
+        qTable,
+        evaluationActionCounts
     };
 }
 
@@ -829,9 +921,7 @@ HedgeSimulationSummary runDeltaHedgeMonteCarlo(
 ) {
     validateGbmParameters(market);
     validateEuropeanCall(option);
-    if (settings.paths <= 1) {
-        throw std::invalid_argument("hedge simulation paths must be greater than 1");
-    }
+    validateHedgeSimulationSettings(settings);
     if (rebalanceEverySteps <= 0) {
         throw std::invalid_argument("rebalanceEverySteps must be positive");
     }
@@ -919,13 +1009,141 @@ void printSeparator(const std::string& title) {
     std::cout << "\n=== " << title << " ===\n";
 }
 
-bool hasArgument(int argc, char* argv[], const std::string& expected) {
+bool startsWith(std::string_view value, std::string_view prefix) {
+    return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
+}
+
+std::string optionValue(int& index, int argc, char* argv[], const std::string& argument) {
+    const std::size_t equalsPosition = argument.find('=');
+    if (equalsPosition != std::string::npos) {
+        return argument.substr(equalsPosition + 1);
+    }
+    if (index + 1 >= argc) {
+        throw std::invalid_argument("missing value for " + argument);
+    }
+    ++index;
+    return argv[index];
+}
+
+double parseDoubleOption(int& index, int argc, char* argv[], const std::string& argument) {
+    const std::string value = optionValue(index, argc, argv, argument);
+    std::size_t parsedCharacters = 0;
+    const double parsed = std::stod(value, &parsedCharacters);
+    if (parsedCharacters != value.size()) {
+        throw std::invalid_argument("invalid numeric value for " + argument + ": " + value);
+    }
+    return parsed;
+}
+
+int parseIntOption(int& index, int argc, char* argv[], const std::string& argument) {
+    const std::string value = optionValue(index, argc, argv, argument);
+    std::size_t parsedCharacters = 0;
+    const int parsed = std::stoi(value, &parsedCharacters);
+    if (parsedCharacters != value.size()) {
+        throw std::invalid_argument("invalid integer value for " + argument + ": " + value);
+    }
+    return parsed;
+}
+
+unsigned long long parseSeedOption(int& index, int argc, char* argv[], const std::string& argument) {
+    const std::string value = optionValue(index, argc, argv, argument);
+    std::size_t parsedCharacters = 0;
+    const unsigned long long parsed = std::stoull(value, &parsedCharacters);
+    if (parsedCharacters != value.size()) {
+        throw std::invalid_argument("invalid seed value for " + argument + ": " + value);
+    }
+    return parsed;
+}
+
+void applyBaseSeed(ExperimentConfig& config, unsigned long long seed) {
+    config.market.seed = seed;
+    config.monteCarlo.seed = seed + 1;
+    config.hedging.seed = seed + 2;
+    config.qLearning.trainingSeed = seed + 3;
+    config.qLearning.evaluationSeed = seed + 4;
+}
+
+RuntimeOptions parseRuntimeOptions(int argc, char* argv[]) {
+    RuntimeOptions options;
+
     for (int index = 1; index < argc; ++index) {
-        if (expected == argv[index]) {
-            return true;
+        const std::string argument = argv[index];
+
+        if (argument == "--json") {
+            options.json = true;
+        } else if (argument == "--help" || argument == "-h") {
+            options.help = true;
+        } else if (argument == "--spot" || startsWith(argument, "--spot=")) {
+            options.config.market.initialStockPrice = parseDoubleOption(index, argc, argv, argument);
+        } else if (argument == "--strike" || startsWith(argument, "--strike=")) {
+            options.config.option.strike = parseDoubleOption(index, argc, argv, argument);
+        } else if (argument == "--drift" || startsWith(argument, "--drift=")) {
+            options.config.market.drift = parseDoubleOption(index, argc, argv, argument);
+        } else if (argument == "--rate" || startsWith(argument, "--rate=")) {
+            options.config.riskFreeRate = parseDoubleOption(index, argc, argv, argument);
+        } else if (argument == "--volatility" || argument == "--sigma"
+            || startsWith(argument, "--volatility=") || startsWith(argument, "--sigma=")) {
+            options.config.market.volatility = parseDoubleOption(index, argc, argv, argument);
+        } else if (argument == "--transaction-cost" || startsWith(argument, "--transaction-cost=")) {
+            options.config.transactionCostRate = parseDoubleOption(index, argc, argv, argument);
+        } else if (argument == "--maturity" || startsWith(argument, "--maturity=")) {
+            const double maturity = parseDoubleOption(index, argc, argv, argument);
+            options.config.market.maturityYears = maturity;
+            options.config.option.maturityYears = maturity;
+        } else if (argument == "--steps" || startsWith(argument, "--steps=")) {
+            options.config.market.steps = parseIntOption(index, argc, argv, argument);
+        } else if (argument == "--mc-paths" || startsWith(argument, "--mc-paths=")) {
+            options.config.monteCarlo.paths = parseIntOption(index, argc, argv, argument);
+        } else if (argument == "--hedge-paths" || startsWith(argument, "--hedge-paths=")) {
+            options.config.hedging.paths = parseIntOption(index, argc, argv, argument);
+        } else if (argument == "--rl-train" || startsWith(argument, "--rl-train=")) {
+            options.config.qLearning.trainingEpisodes = parseIntOption(index, argc, argv, argument);
+        } else if (argument == "--rl-eval" || startsWith(argument, "--rl-eval=")) {
+            options.config.qLearning.evaluationPaths = parseIntOption(index, argc, argv, argument);
+        } else if (argument == "--rl-loss-aversion" || startsWith(argument, "--rl-loss-aversion=")) {
+            options.config.qLearning.lossAversion = parseDoubleOption(index, argc, argv, argument);
+        } else if (argument == "--seed" || startsWith(argument, "--seed=")) {
+            applyBaseSeed(options.config, parseSeedOption(index, argc, argv, argument));
+        } else if (argument == "--path-seed" || startsWith(argument, "--path-seed=")) {
+            options.config.market.seed = parseSeedOption(index, argc, argv, argument);
+        } else if (argument == "--mc-seed" || startsWith(argument, "--mc-seed=")) {
+            options.config.monteCarlo.seed = parseSeedOption(index, argc, argv, argument);
+        } else if (argument == "--hedge-seed" || startsWith(argument, "--hedge-seed=")) {
+            options.config.hedging.seed = parseSeedOption(index, argc, argv, argument);
+        } else if (argument == "--rl-train-seed" || startsWith(argument, "--rl-train-seed=")) {
+            options.config.qLearning.trainingSeed = parseSeedOption(index, argc, argv, argument);
+        } else if (argument == "--rl-eval-seed" || startsWith(argument, "--rl-eval-seed=")) {
+            options.config.qLearning.evaluationSeed = parseSeedOption(index, argc, argv, argument);
+        } else {
+            throw std::invalid_argument("unknown argument: " + argument);
         }
     }
-    return false;
+
+    validateExperimentConfig(options.config);
+    return options;
+}
+
+void printUsage() {
+    std::cout
+        << "StochEdge quant engine\n\n"
+        << "Usage:\n"
+        << "  stochedge_engine [--json] [options]\n\n"
+        << "Core options:\n"
+        << "  --spot VALUE              Initial stock price\n"
+        << "  --strike VALUE            European call strike\n"
+        << "  --drift VALUE             Real-world GBM drift for sample path display\n"
+        << "  --rate VALUE              Risk-free pricing rate\n"
+        << "  --volatility VALUE        Annualized volatility\n"
+        << "  --transaction-cost VALUE  Proportional stock trade cost\n"
+        << "  --maturity VALUE          Maturity in years\n"
+        << "  --steps VALUE             Time steps per path\n"
+        << "  --mc-paths VALUE          Monte Carlo pricing paths\n"
+        << "  --hedge-paths VALUE       Paths per hedge strategy\n"
+        << "  --rl-train VALUE          RL training episodes\n"
+        << "  --rl-eval VALUE           RL evaluation paths\n"
+        << "  --rl-loss-aversion VALUE  Extra penalty applied to negative RL P&L\n"
+        << "  --seed VALUE              Base seed for all random streams\n"
+        << "  --help                    Show this help\n";
 }
 
 std::string jsonEscape(const std::string& value) {
@@ -976,33 +1194,58 @@ void printJsonHedgeSummary(const HedgeSimulationSummary& summary) {
         << "}";
 }
 
+std::string qLearningActionLabel(int actionIndex);
+
+void printJsonActionCounts(const std::vector<int>& actionCounts) {
+    std::cout << "[";
+    for (std::size_t index = 0; index < actionCounts.size(); ++index) {
+        if (index > 0) {
+            std::cout << ",";
+        }
+        std::cout
+            << "{"
+            << "\"action\":\"" << jsonEscape(qLearningActionLabel(static_cast<int>(index))) << "\","
+            << "\"count\":" << actionCounts[index]
+            << "}";
+    }
+    std::cout << "]";
+}
+
 void printJsonReport(
-    const GbmParameters& params,
-    const EuropeanCallOption& option,
-    double riskFreeRate,
-    double transactionCostRate,
+    const ExperimentConfig& config,
     const MonteCarloResult& monteCarloPrice,
     const BlackScholesResult& blackScholes,
     const DeltaHedgeResult& deltaHedge,
-    const HedgingEnvironmentDemo& environmentDemo,
+    const HedgingEnvironmentRun& environmentRun,
     const QLearningResult& qLearningResult,
     const std::vector<HedgeSimulationSummary>& strategySummaries
 ) {
     const double monteCarloPriceError = monteCarloPrice.discountedPrice - blackScholes.callPrice;
+    const GbmParameters& params = config.market;
+    const EuropeanCallOption& option = config.option;
 
     std::cout << std::fixed << std::setprecision(6);
     std::cout
         << "{"
-        << "\"project\":\"StochHedge\","
+        << "\"project\":\"StochEdge\","
         << "\"market\":{"
         << "\"initialStockPrice\":" << params.initialStockPrice << ","
         << "\"drift\":" << params.drift << ","
-        << "\"riskFreeRate\":" << riskFreeRate << ","
+        << "\"riskFreeRate\":" << config.riskFreeRate << ","
         << "\"volatility\":" << params.volatility << ","
-        << "\"transactionCostRate\":" << transactionCostRate << ","
+        << "\"transactionCostRate\":" << config.transactionCostRate << ","
         << "\"maturityYears\":" << option.maturityYears << ","
         << "\"steps\":" << params.steps << ","
         << "\"strike\":" << option.strike
+        << "},";
+
+    std::cout
+        << "\"settings\":{"
+        << "\"monteCarloPaths\":" << config.monteCarlo.paths << ","
+        << "\"hedgePaths\":" << config.hedging.paths << ","
+        << "\"rlTrainingEpisodes\":" << config.qLearning.trainingEpisodes << ","
+        << "\"rlEvaluationPaths\":" << config.qLearning.evaluationPaths << ","
+        << "\"rlLossAversion\":" << config.qLearning.lossAversion
         << "},";
 
     std::cout
@@ -1036,24 +1279,27 @@ void printJsonReport(
         << "},";
 
     std::cout
-        << "\"rlEnvironmentDemo\":{"
+        << "\"rlEnvironment\":{"
         << "\"policy\":\"Black-Scholes delta\","
         << "\"state\":\"log(S/K), time left, current hedge, BS delta, delta gap\","
-        << "\"action\":\"choose target hedge\","
+        << "\"action\":\"choose target hedge adjustment\","
         << "\"stepReward\":\"negative transaction cost\","
-        << "\"finalRewardPenalty\":\"negative absolute final P&L\","
-        << "\"steps\":" << environmentDemo.steps << ","
-        << "\"totalTransactionCosts\":" << environmentDemo.totalTransactionCosts << ","
-        << "\"finalPnl\":" << environmentDemo.finalPnl << ","
-        << "\"totalReward\":" << environmentDemo.totalReward
+        << "\"finalRewardPenalty\":\"negative absolute final P&L plus loss-aversion penalty\","
+        << "\"steps\":" << environmentRun.steps << ","
+        << "\"totalTransactionCosts\":" << environmentRun.totalTransactionCosts << ","
+        << "\"finalPnl\":" << environmentRun.finalPnl << ","
+        << "\"totalReward\":" << environmentRun.totalReward
         << "},";
 
     std::cout
         << "\"learnedHedger\":{"
-        << "\"algorithm\":\"tabular Q-learning style update\","
+        << "\"algorithm\":\"tabular Q-learning with partial hedge actions\","
         << "\"trainingEpisodes\":" << qLearningResult.trainingEpisodes << ","
         << "\"averageTrainingFinalReward\":" << qLearningResult.averageTrainingReward << ","
-        << "\"actionMenu\":\"hold, move to Black-Scholes delta\","
+        << "\"actionMenu\":\"hold, move 25%, move 50%, move to Black-Scholes delta\","
+        << "\"evaluationActionCounts\":";
+    printJsonActionCounts(qLearningResult.evaluationActionCounts);
+    std::cout << ","
         << "\"evaluation\":";
     printJsonHedgeSummary(qLearningResult.evaluationSummary);
     std::cout << "},";
@@ -1090,7 +1336,11 @@ std::string qLearningActionLabel(int actionIndex) {
         case 0:
             return "hold";
         case 1:
-            return "move";
+            return "move25";
+        case 2:
+            return "move50";
+        case 3:
+            return "move100";
         default:
             return "unknown";
     }
@@ -1167,21 +1417,55 @@ void printPolicyGapRow(
 }
 
 void printLearnedPolicySnapshot(const std::vector<double>& qTable) {
-    std::cout << "Action labels: hold = do not trade, move = rebalance to Black-Scholes delta\n\n";
+    std::cout << "Action labels: hold, move25, move50, move100 toward Black-Scholes delta\n\n";
     printPolicyGapRow("under-hedged, mid-life", qTable, 0.50, 0.50, true);
     printPolicyGapRow("over-hedged, mid-life ", qTable, 0.50, 0.50, false);
     printPolicyGapRow("under-hedged, near end", qTable, 0.50, 0.08, true);
     printPolicyGapRow("over-hedged, near end ", qTable, 0.50, 0.08, false);
 }
 
+std::vector<StrategyConfig> defaultStrategyConfigs(int steps) {
+    const int weeklyRebalance = std::max(1, steps / 52);
+    const int monthlyRebalance = std::max(1, steps / 12);
+
+    return {
+        {"Daily rebalance", 1, 0.0},
+        {"Weekly rebalance", weeklyRebalance, 0.0},
+        {"Monthly rebalance", monthlyRebalance, 0.0},
+        {"Daily check + 0.05 delta no-trade band", 1, 0.05},
+        {"Daily check + 0.10 delta no-trade band", 1, 0.10}
+    };
+}
+
+void printActionCounts(const std::vector<int>& actionCounts) {
+    std::cout << "evaluation action counts       : ";
+    for (std::size_t index = 0; index < actionCounts.size(); ++index) {
+        if (index > 0) {
+            std::cout << ", ";
+        }
+        std::cout << qLearningActionLabel(static_cast<int>(index)) << "=" << actionCounts[index];
+    }
+    std::cout << '\n';
+}
+
 int main(int argc, char* argv[]) {
-    const GbmParameters params;
-    const EuropeanCallOption option;
-    const double riskFreeRate = 0.05;
-    const double transactionCostRate = 0.001;
-    const MonteCarloSettings monteCarloSettings;
-    const HedgeSimulationSettings hedgeSimulationSettings;
-    const QLearningSettings qLearningSettings;
+    RuntimeOptions runtime;
+    try {
+        runtime = parseRuntimeOptions(argc, argv);
+    } catch (const std::exception& exception) {
+        std::cerr << "Configuration error: " << exception.what() << "\n\n";
+        printUsage();
+        return 2;
+    }
+
+    if (runtime.help) {
+        printUsage();
+        return 0;
+    }
+
+    const ExperimentConfig& config = runtime.config;
+    const GbmParameters& params = config.market;
+    const EuropeanCallOption& option = config.option;
 
     const std::vector<double> path = simulateGbmPath(params);
     const double finalStockPrice = path.back();
@@ -1190,113 +1474,64 @@ int main(int argc, char* argv[]) {
     const MonteCarloResult monteCarloPrice = priceEuropeanCallMonteCarlo(
         params,
         option,
-        riskFreeRate,
-        monteCarloSettings
+        config.riskFreeRate,
+        config.monteCarlo
     );
     const BlackScholesResult blackScholes = priceEuropeanCallBlackScholes(
         params.initialStockPrice,
         option,
-        riskFreeRate,
+        config.riskFreeRate,
         params.volatility
     );
     const DeltaHedgeResult deltaHedge = runOnePathDeltaHedge(
         path,
         option,
-        riskFreeRate,
+        config.riskFreeRate,
         params.volatility,
-        transactionCostRate,
+        config.transactionCostRate,
         1,
         0.0
     );
-    const HedgingEnvironmentDemo environmentDemo = runBlackScholesPolicyEnvironmentDemo(
+    const HedgingEnvironmentRun environmentRun = runBlackScholesPolicyEnvironment(
         path,
         option,
-        riskFreeRate,
+        config.riskFreeRate,
         params.volatility,
-        transactionCostRate
+        config.transactionCostRate
     );
-    const HedgeSimulationSummary dailyHedgeSummary = runDeltaHedgeMonteCarlo(
-        params,
-        option,
-        riskFreeRate,
-        params.volatility,
-        transactionCostRate,
-        1,
-        0.0,
-        "Daily rebalance",
-        hedgeSimulationSettings
-    );
-    const HedgeSimulationSummary weeklyHedgeSummary = runDeltaHedgeMonteCarlo(
-        params,
-        option,
-        riskFreeRate,
-        params.volatility,
-        transactionCostRate,
-        5,
-        0.0,
-        "Weekly-ish rebalance",
-        hedgeSimulationSettings
-    );
-    const HedgeSimulationSummary monthlyHedgeSummary = runDeltaHedgeMonteCarlo(
-        params,
-        option,
-        riskFreeRate,
-        params.volatility,
-        transactionCostRate,
-        21,
-        0.0,
-        "Monthly-ish rebalance",
-        hedgeSimulationSettings
-    );
-    const HedgeSimulationSummary band005HedgeSummary = runDeltaHedgeMonteCarlo(
-        params,
-        option,
-        riskFreeRate,
-        params.volatility,
-        transactionCostRate,
-        1,
-        0.05,
-        "Daily check + 0.05 delta no-trade band",
-        hedgeSimulationSettings
-    );
-    const HedgeSimulationSummary band010HedgeSummary = runDeltaHedgeMonteCarlo(
-        params,
-        option,
-        riskFreeRate,
-        params.volatility,
-        transactionCostRate,
-        1,
-        0.10,
-        "Daily check + 0.10 delta no-trade band",
-        hedgeSimulationSettings
-    );
+
+    std::vector<HedgeSimulationSummary> strategySummaries;
+    for (const StrategyConfig& strategy : defaultStrategyConfigs(params.steps)) {
+        strategySummaries.push_back(runDeltaHedgeMonteCarlo(
+            params,
+            option,
+            config.riskFreeRate,
+            params.volatility,
+            config.transactionCostRate,
+            strategy.rebalanceEverySteps,
+            strategy.deltaRebalanceBand,
+            strategy.label,
+            config.hedging
+        ));
+    }
+
     const QLearningResult qLearningResult = trainAndEvaluateQHedger(
         params,
         option,
-        riskFreeRate,
+        config.riskFreeRate,
         params.volatility,
-        transactionCostRate,
-        qLearningSettings
+        config.transactionCostRate,
+        config.qLearning
     );
-    const std::vector<HedgeSimulationSummary> strategySummaries{
-        dailyHedgeSummary,
-        weeklyHedgeSummary,
-        monthlyHedgeSummary,
-        band005HedgeSummary,
-        band010HedgeSummary,
-        qLearningResult.evaluationSummary
-    };
+    strategySummaries.push_back(qLearningResult.evaluationSummary);
 
-    if (hasArgument(argc, argv, "--json")) {
+    if (runtime.json) {
         printJsonReport(
-            params,
-            option,
-            riskFreeRate,
-            transactionCostRate,
+            config,
             monteCarloPrice,
             blackScholes,
             deltaHedge,
-            environmentDemo,
+            environmentRun,
             qLearningResult,
             strategySummaries
         );
@@ -1304,27 +1539,32 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << std::fixed << std::setprecision(4);
-    std::cout << "StochHedge: GBM + Monte Carlo + Black-Scholes\n";
+    std::cout << "StochEdge: GBM + Monte Carlo + Black-Scholes + RL hedging\n";
 
     printSeparator("Market and option inputs");
     std::cout << "S0       : " << params.initialStockPrice << '\n';
-    std::cout << "mu       : " << params.drift << "  (real-world path demo drift)\n";
-    std::cout << "r        : " << riskFreeRate << "  (risk-free pricing drift)\n";
+    std::cout << "mu       : " << params.drift << "  (real-world path drift)\n";
+    std::cout << "r        : " << config.riskFreeRate << "  (risk-free pricing drift)\n";
     std::cout << "sigma    : " << params.volatility << '\n';
-    std::cout << "cost     : " << transactionCostRate << "  (0.001 means 0.10% per stock trade)\n";
+    std::cout << "cost     : " << config.transactionCostRate << "  (0.001 means 0.10% per stock trade)\n";
     std::cout << "T years  : " << option.maturityYears << '\n';
     std::cout << "steps    : " << params.steps << '\n';
     std::cout << "strike K : " << option.strike << '\n';
+    std::cout << "MC paths : " << config.monteCarlo.paths << '\n';
+    std::cout << "hedge paths : " << config.hedging.paths << '\n';
+    std::cout << "RL train/eval paths : "
+              << config.qLearning.trainingEpisodes << " / "
+              << config.qLearning.evaluationPaths << '\n';
 
     printSeparator("One possible stock path");
     std::cout << "Sampled path points:\n";
     std::cout << "step, stock_price\n";
 
-    const int printEvery = 21;
-    for (std::size_t i = 0; i < path.size(); i += printEvery) {
+    const int printEvery = std::max(1, params.steps / 12);
+    for (std::size_t i = 0; i < path.size(); i += static_cast<std::size_t>(printEvery)) {
         std::cout << i << ", " << path[i] << '\n';
     }
-    if ((path.size() - 1) % printEvery != 0) {
+    if ((path.size() - 1) % static_cast<std::size_t>(printEvery) != 0) {
         std::cout << (path.size() - 1) << ", " << finalStockPrice << '\n';
     }
 
@@ -1348,7 +1588,7 @@ int main(int argc, char* argv[]) {
               << (std::abs(monteCarloPriceError) <= 2.0 * monteCarloPrice.discountedStdError ? "yes" : "no")
               << '\n';
 
-    printSeparator("One-path delta hedge demo");
+    printSeparator("One-path delta hedge run");
     std::cout << "sold option for premium        : " << deltaHedge.optionPremium << '\n';
     std::cout << "initial stock hedge delta      : " << deltaHedge.initialDelta << '\n';
     std::cout << "number of rebalances           : " << deltaHedge.rebalances << '\n';
@@ -1357,29 +1597,28 @@ int main(int argc, char* argv[]) {
     std::cout << "total transaction costs        : " << deltaHedge.totalTransactionCosts << '\n';
     std::cout << "final hedging P&L              : " << deltaHedge.hedgingPnl << '\n';
 
-    printSeparator("RL-style environment demo");
+    printSeparator("RL environment run");
     std::cout << "policy                         : Black-Scholes delta\n";
     std::cout << "state                          : log(S/K), time left, current hedge, BS delta, delta gap\n";
-    std::cout << "action                         : choose target hedge\n";
+    std::cout << "action                         : choose target hedge adjustment\n";
     std::cout << "step reward                    : negative transaction cost\n";
-    std::cout << "final reward penalty           : negative absolute final P&L\n";
-    std::cout << "environment steps              : " << environmentDemo.steps << '\n';
-    std::cout << "total transaction costs        : " << environmentDemo.totalTransactionCosts << '\n';
-    std::cout << "final P&L                      : " << environmentDemo.finalPnl << '\n';
-    std::cout << "total reward                   : " << environmentDemo.totalReward << '\n';
+    std::cout << "final reward penalty           : negative absolute final P&L plus loss-aversion penalty\n";
+    std::cout << "environment steps              : " << environmentRun.steps << '\n';
+    std::cout << "total transaction costs        : " << environmentRun.totalTransactionCosts << '\n';
+    std::cout << "final P&L                      : " << environmentRun.finalPnl << '\n';
+    std::cout << "total reward                   : " << environmentRun.totalReward << '\n';
 
     printSeparator("Many-path delta hedge comparison");
-    printHedgeSummary(dailyHedgeSummary);
-    printHedgeSummary(weeklyHedgeSummary);
-    printHedgeSummary(monthlyHedgeSummary);
-    printHedgeSummary(band005HedgeSummary);
-    printHedgeSummary(band010HedgeSummary);
+    for (std::size_t index = 0; index + 1 < strategySummaries.size(); ++index) {
+        printHedgeSummary(strategySummaries[index]);
+    }
 
-    printSeparator("First learned hedger");
-    std::cout << "algorithm                      : tabular Q-learning style update\n";
+    printSeparator("Learned hedger");
+    std::cout << "algorithm                      : tabular Q-learning with partial hedge actions\n";
     std::cout << "training episodes              : " << qLearningResult.trainingEpisodes << '\n';
     std::cout << "average training final reward  : " << qLearningResult.averageTrainingReward << '\n';
-    std::cout << "action menu                    : hold, move to Black-Scholes delta\n";
+    std::cout << "action menu                    : hold, move25, move50, move100\n";
+    printActionCounts(qLearningResult.evaluationActionCounts);
     printHedgeSummary(qLearningResult.evaluationSummary);
 
     printSeparator("Strategy leaderboard by tail risk");

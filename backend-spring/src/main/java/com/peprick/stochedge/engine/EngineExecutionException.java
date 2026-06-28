@@ -1,4 +1,4 @@
-package com.peprick.hedgest.engine;
+package com.peprick.stochedge.engine;
 
 public class EngineExecutionException extends RuntimeException {
 

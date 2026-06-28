@@ -1,4 +1,4 @@
-package com.peprick.hedgest.api;
+package com.peprick.stochedge.api;
 
 import java.time.Instant;
 
