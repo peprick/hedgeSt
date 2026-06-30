@@ -1,6 +1,7 @@
 package com.peprick.stochedge.api;
 
 import com.peprick.stochedge.engine.EngineExecutionException;
+import com.peprick.stochedge.market.MarketDataException;
 import java.time.Instant;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,17 @@ public class GlobalExceptionHandler {
                 Instant.now(),
                 HttpStatus.BAD_GATEWAY.value(),
                 "Quant engine execution failed",
+                exception.getMessage()
+            ));
+    }
+
+    @ExceptionHandler(MarketDataException.class)
+    public ResponseEntity<ApiError> handleMarketData(MarketDataException exception) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+            .body(new ApiError(
+                Instant.now(),
+                HttpStatus.BAD_GATEWAY.value(),
+                "Market data request failed",
                 exception.getMessage()
             ));
     }

@@ -511,6 +511,93 @@ svg {
     font-weight: 750;
 }
 
+.market-control {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 18px;
+    margin-bottom: 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.market-form {
+    display: flex;
+    align-items: end;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.market-form label {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 850;
+    text-transform: uppercase;
+}
+
+.market-form input,
+.market-form select {
+    min-width: 128px;
+    height: 42px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-strong);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 800;
+}
+
+.market-chart {
+    min-height: 320px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-strong);
+    overflow: hidden;
+}
+
+.market-chart svg {
+    display: block;
+    width: 100%;
+    height: 320px;
+}
+
+.market-chart .axis-line {
+    stroke: #c9d4e3;
+    stroke-width: 1;
+}
+
+.market-chart .grid-line {
+    stroke: #dbe4ef;
+    stroke-width: 1;
+}
+
+.market-chart .price-line {
+    fill: none;
+    stroke: var(--blue);
+    stroke-width: 3;
+}
+
+.market-chart .price-area {
+    fill: rgba(37, 99, 235, 0.10);
+}
+
+.market-chart .chart-label {
+    fill: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.compact-table table {
+    min-width: 520px;
+}
+
 .legend span {
     display: inline-flex;
     align-items: center;
@@ -660,7 +747,8 @@ tbody tr:hover {
 
     .topbar,
     .control-band,
-    .toolbar {
+    .toolbar,
+    .market-control {
         align-items: stretch;
         flex-direction: column;
     }
@@ -699,5 +787,14 @@ tbody tr:hover {
 
     .legend {
         justify-content: flex-start;
+    }
+
+    .market-form {
+        justify-content: stretch;
+    }
+
+    .market-form label,
+    .market-form .primary-button {
+        width: 100%;
     }
 }

@@ -1,5 +1,6 @@
 const state = {
     response: null,
+    marketHistory: null,
     sortMode: "cvar",
     activeTab: "overview"
 };
@@ -21,6 +22,15 @@ const nodes = {
     learningFacts: document.getElementById("learningFacts"),
     agentCompare: document.getElementById("agentCompare"),
     onePathCards: document.getElementById("onePathCards"),
+    marketForm: document.getElementById("marketForm"),
+    marketSymbolInput: document.getElementById("marketSymbolInput"),
+    marketDaysInput: document.getElementById("marketDaysInput"),
+    loadMarketButton: document.getElementById("loadMarketButton"),
+    marketCards: document.getElementById("marketCards"),
+    marketChart: document.getElementById("marketChart"),
+    marketChartTitle: document.getElementById("marketChartTitle"),
+    marketRealFacts: document.getElementById("marketRealFacts"),
+    marketRecentTable: document.getElementById("marketRecentTable"),
     jsonView: document.getElementById("jsonView"),
     copyJsonButton: document.getElementById("copyJsonButton")
 };
@@ -35,6 +45,10 @@ function boot() {
 function bindEvents() {
     nodes.refreshHealthButton.addEventListener("click", refreshHealth);
     nodes.runButton.addEventListener("click", runExperiment);
+    nodes.marketForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        loadMarketHistory();
+    });
     nodes.copyJsonButton.addEventListener("click", copyJson);
 
     document.querySelectorAll("[data-tab]").forEach((button) => {
@@ -91,6 +105,31 @@ async function runExperiment() {
         showError(error.message || "Could not run experiment.");
     } finally {
         setLoading(false);
+        refreshIcons();
+    }
+}
+
+async function loadMarketHistory() {
+    clearError();
+    setMarketLoading(true);
+
+    const symbol = nodes.marketSymbolInput.value.trim() || "AAPL";
+    const days = nodes.marketDaysInput.value || "252";
+
+    try {
+        const response = await fetch(`/api/market/history?symbol=${encodeURIComponent(symbol)}&days=${encodeURIComponent(days)}`);
+        const body = await response.json();
+
+        if (!response.ok) {
+            throw new Error(body.message || `Market data failed with HTTP ${response.status}`);
+        }
+
+        state.marketHistory = body;
+        renderMarketHistory(body);
+    } catch (error) {
+        showError(error.message || "Could not load market history.");
+    } finally {
+        setMarketLoading(false);
         refreshIcons();
     }
 }
@@ -300,6 +339,152 @@ function renderOnePath(onePath) {
     ]);
 }
 
+function renderMarketHistory(history) {
+    const points = history.points || [];
+    const latest = points[points.length - 1] || {};
+
+    nodes.marketChartTitle.textContent = `${history.symbol} Close Price History`;
+    renderMetricCards(nodes.marketCards, [
+        {
+            label: "Latest Close",
+            value: money(history.latestClose),
+            note: `${history.endDate || "latest"} close`
+        },
+        {
+            label: "Total Return",
+            value: signedPercent(history.totalReturn),
+            note: `${history.observations || points.length} daily closes`
+        },
+        {
+            label: "Realized Volatility",
+            value: percent(history.annualizedVolatility),
+            note: "Annualized from daily returns"
+        },
+        {
+            label: "Annualized Drift",
+            value: signedPercent(history.annualizedDrift),
+            note: "Average daily log return x 252"
+        }
+    ]);
+
+    renderMarketFacts(history);
+    renderMarketChart(points);
+    renderRecentMarketRows(points);
+
+    if (latest.date) {
+        nodes.marketSymbolInput.value = history.symbol || nodes.marketSymbolInput.value;
+    }
+}
+
+function renderMarketFacts(history) {
+    const facts = [
+        ["Provider", history.provider],
+        ["Provider Symbol", history.providerSymbol],
+        ["Start Date", history.startDate],
+        ["End Date", history.endDate],
+        ["Min Close", money(history.minClose)],
+        ["Max Close", money(history.maxClose)],
+        ["Latest Close", money(history.latestClose)],
+        ["Observation Count", formatNumber(history.observations, 0)]
+    ];
+
+    nodes.marketRealFacts.replaceChildren();
+    facts.forEach(([label, value]) => {
+        const item = createElement("div", "assumption-item");
+        item.append(textElement("span", "", label), textElement("strong", "", value || "N/A"));
+        nodes.marketRealFacts.append(item);
+    });
+}
+
+function renderRecentMarketRows(points) {
+    nodes.marketRecentTable.replaceChildren();
+    points.slice(-8).reverse().forEach((point) => {
+        const row = document.createElement("tr");
+        [
+            point.date,
+            money(point.close),
+            point.logReturn == null ? "N/A" : signedPercent(point.logReturn),
+            formatVolume(point.volume)
+        ].forEach((value) => row.append(textElement("td", "", value)));
+        nodes.marketRecentTable.append(row);
+    });
+}
+
+function renderMarketChart(points) {
+    nodes.marketChart.replaceChildren();
+    if (!Array.isArray(points) || points.length < 2) {
+        nodes.marketChart.append(textElement("div", "metric-note", "Not enough prices to draw a chart."));
+        return;
+    }
+
+    const width = 1000;
+    const height = 320;
+    const padding = { top: 24, right: 42, bottom: 34, left: 54 };
+    const closes = points.map((point) => Number(point.close));
+    const minClose = Math.min(...closes);
+    const maxClose = Math.max(...closes);
+    const range = Math.max(maxClose - minClose, 1e-9);
+
+    const x = (index) => padding.left
+        + (index / Math.max(1, points.length - 1)) * (width - padding.left - padding.right);
+    const y = (close) => padding.top
+        + (1 - ((close - minClose) / range)) * (height - padding.top - padding.bottom);
+
+    const linePath = points.map((point, index) => {
+        const command = index === 0 ? "M" : "L";
+        return `${command}${x(index).toFixed(2)},${y(point.close).toFixed(2)}`;
+    }).join(" ");
+    const areaPath = `${linePath} L${x(points.length - 1).toFixed(2)},${height - padding.bottom} L${padding.left},${height - padding.bottom} Z`;
+
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Historical close price line chart");
+
+    [0, 0.25, 0.50, 0.75, 1].forEach((tick) => {
+        const tickY = padding.top + tick * (height - padding.top - padding.bottom);
+        svg.append(svgLine(padding.left, tickY, width - padding.right, tickY, "grid-line"));
+    });
+
+    svg.append(svgLine(padding.left, padding.top, padding.left, height - padding.bottom, "axis-line"));
+    svg.append(svgLine(padding.left, height - padding.bottom, width - padding.right, height - padding.bottom, "axis-line"));
+    svg.append(svgPath(areaPath, "price-area"));
+    svg.append(svgPath(linePath, "price-line"));
+
+    svg.append(svgText(padding.left, 18, money(maxClose), "chart-label"));
+    svg.append(svgText(padding.left, height - 8, money(minClose), "chart-label"));
+    svg.append(svgText(padding.left, height - 16, points[0].date, "chart-label"));
+    svg.append(svgText(width - padding.right - 96, height - 16, points[points.length - 1].date, "chart-label"));
+
+    nodes.marketChart.append(svg);
+}
+
+function svgLine(x1, y1, x2, y2, className) {
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", x1);
+    line.setAttribute("y1", y1);
+    line.setAttribute("x2", x2);
+    line.setAttribute("y2", y2);
+    line.setAttribute("class", className);
+    return line;
+}
+
+function svgPath(d, className) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", className);
+    return path;
+}
+
+function svgText(x, y, text, className) {
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", x);
+    label.setAttribute("y", y);
+    label.setAttribute("class", className);
+    label.textContent = text;
+    return label;
+}
+
 function createCompareCard(title, strategy) {
     const card = createElement("div", "compare-item");
     card.append(textElement("h3", "", title));
@@ -356,6 +541,9 @@ function activateTab(tab) {
     document.querySelectorAll("[data-panel]").forEach((panel) => {
         panel.classList.toggle("is-hidden", panel.dataset.panel !== tab);
     });
+    if (tab === "market" && !state.marketHistory) {
+        loadMarketHistory();
+    }
 }
 
 async function copyJson() {
@@ -375,6 +563,12 @@ function setLoading(isLoading) {
     nodes.runButton.disabled = isLoading;
     const label = nodes.runButton.querySelector("span");
     label.textContent = isLoading ? "Running..." : "Run Experiment";
+}
+
+function setMarketLoading(isLoading) {
+    nodes.loadMarketButton.disabled = isLoading;
+    const label = nodes.loadMarketButton.querySelector("span");
+    label.textContent = isLoading ? "Loading..." : "Load Stock";
 }
 
 function showError(message) {
@@ -439,6 +633,23 @@ function percent(value) {
         return "N/A";
     }
     return `${formatNumber(Number(value) * 100, 2)}%`;
+}
+
+function signedPercent(value) {
+    if (!Number.isFinite(Number(value))) {
+        return "N/A";
+    }
+    const sign = Number(value) > 0 ? "+" : "";
+    return `${sign}${percent(value)}`;
+}
+
+function formatVolume(value) {
+    if (!Number.isFinite(Number(value))) {
+        return "N/A";
+    }
+    return Number(value).toLocaleString("en-US", {
+        maximumFractionDigits: 0
+    });
 }
 
 function safeAbs(value) {
