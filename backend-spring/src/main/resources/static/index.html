@@ -45,6 +45,7 @@
                 <button class="tab-button is-active" type="button" data-tab="overview">Overview</button>
                 <button class="tab-button" type="button" data-tab="strategies">Strategies</button>
                 <button class="tab-button" type="button" data-tab="learning">Learning Agent</button>
+                <button class="tab-button" type="button" data-tab="market">Real Market</button>
                 <button class="tab-button" type="button" data-tab="json">Engine JSON</button>
             </section>
 
@@ -188,6 +189,83 @@
                     </div>
                     <div class="metric-grid compact" id="onePathCards"></div>
                 </article>
+            </section>
+
+            <section class="tab-panel is-hidden" id="marketPanel" data-panel="market">
+                <section class="market-control" aria-label="Real market controls">
+                    <div>
+                        <p class="eyebrow">Real stock behavior</p>
+                        <h2>Historical Daily Prices</h2>
+                    </div>
+                    <form class="market-form" id="marketForm">
+                        <label>
+                            <span>Symbol</span>
+                            <input id="marketSymbolInput" name="symbol" value="AAPL" maxlength="20" autocomplete="off">
+                        </label>
+                        <label>
+                            <span>Days</span>
+                            <select id="marketDaysInput" name="days">
+                                <option value="126">6 months</option>
+                                <option value="252" selected>1 year</option>
+                                <option value="504">2 years</option>
+                                <option value="756">3 years</option>
+                            </select>
+                        </label>
+                        <button class="primary-button" id="loadMarketButton" type="submit">
+                            <i data-lucide="search"></i>
+                            <span>Load Stock</span>
+                        </button>
+                    </form>
+                </section>
+
+                <div class="metric-grid" id="marketCards"></div>
+
+                <article class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <p class="eyebrow">Price path</p>
+                            <h2 id="marketChartTitle">Close Price History</h2>
+                        </div>
+                        <i data-lucide="line-chart"></i>
+                    </div>
+                    <div class="market-chart" id="marketChart"></div>
+                </article>
+
+                <div class="dashboard-grid">
+                    <article class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <p class="eyebrow">Behavior stats</p>
+                                <h2>Real Market Calibration</h2>
+                            </div>
+                            <i data-lucide="gauge"></i>
+                        </div>
+                        <div class="assumption-grid" id="marketRealFacts"></div>
+                    </article>
+
+                    <article class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <p class="eyebrow">Latest observations</p>
+                                <h2>Recent Daily Closes</h2>
+                            </div>
+                            <i data-lucide="list"></i>
+                        </div>
+                        <div class="table-wrap compact-table">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Close</th>
+                                        <th>Daily Return</th>
+                                        <th>Volume</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="marketRecentTable"></tbody>
+                            </table>
+                        </div>
+                    </article>
+                </div>
             </section>
 
             <section class="tab-panel is-hidden" id="jsonPanel" data-panel="json">

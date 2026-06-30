@@ -9,7 +9,7 @@ class QuantExperimentControllerTest {
 
     @Test
     void healthReportsBackendUp() {
-        QuantExperimentController controller = new QuantExperimentController(null);
+        QuantExperimentController controller = new QuantExperimentController(null, null);
 
         Map<String, String> health = controller.health();
 
