@@ -32,7 +32,7 @@ public class QuantEngineService {
         @Value("${quant.engine.timeout-seconds}") long timeoutSeconds
     ) {
         this.objectMapper = objectMapper;
-        this.engineExecutable = Path.of(engineExecutable).toAbsolutePath().normalize();
+        this.engineExecutable = resolveEngineExecutable(Path.of(engineExecutable).toAbsolutePath().normalize());
         this.engineArguments = Arrays.stream(engineArguments.split("\\s+"))
             .filter(argument -> !argument.isBlank())
             .toList();
@@ -90,5 +90,36 @@ public class QuantEngineService {
         } catch (IOException exception) {
             throw new IllegalStateException("Could not read C++ engine output", exception);
         }
+    }
+
+    static Path resolveEngineExecutable(Path configuredPath) {
+        return resolveEngineExecutable(configuredPath, isWindows());
+    }
+
+    static Path resolveEngineExecutable(Path configuredPath, boolean windows) {
+        if (configuredPath.toFile().isFile()) {
+            return configuredPath;
+        }
+
+        String configuredPathText = configuredPath.toString();
+        if (windows && !configuredPathText.endsWith(".exe")) {
+            Path windowsExecutable = Path.of(configuredPathText + ".exe");
+            if (windowsExecutable.toFile().isFile()) {
+                return windowsExecutable;
+            }
+        }
+
+        if (!windows && configuredPathText.endsWith(".exe")) {
+            Path unixExecutable = Path.of(configuredPathText.substring(0, configuredPathText.length() - 4));
+            if (unixExecutable.toFile().isFile()) {
+                return unixExecutable;
+            }
+        }
+
+        return configuredPath;
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
     }
 }
