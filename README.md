@@ -179,14 +179,6 @@ The default run uses:
 The engine currently reports a Black-Scholes call price near `10.450584` and
 compares six hedging strategies.
 
-## Resume Angle
-
-Built StochEdge, a configurable C++ stochastic-market simulation engine for option pricing
-and hedging, then exposed it through a Java Spring Boot API and dashboard.
-Compared Black-Scholes delta hedging, transaction-cost-aware strategy variants,
-and a tabular reinforcement learning hedger using Monte Carlo P&L, VaR, CVaR,
-tail-loss metrics, and learned hedge-action counts.
-
 ## Next Improvements
 
 - Split the C++ engine into pricing, simulation, hedging, and learning modules.
